@@ -1,3 +1,5 @@
+import base64
+import io
 import os
 import tempfile
 import threading
@@ -7,44 +9,103 @@ from datetime import datetime
 import pyaudio
 import rumps
 import torch
+from PIL import ImageGrab
 from TTS.api import TTS
 from llama_cpp import Llama
+from llama_cpp.llama_chat_format import Llava15ChatHandler, Llava16ChatHandler, MoondreamChatHandler
 from playsound import playsound
 from pywhispercpp.model import Model
+
+import custom_functions
+from custom_functions import convert_func_args
 
 
 class AssistantModelsMixin:
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.last_recorded_result = None
-        self.llm = Llama.from_pretrained(
-            repo_id="Orenguteng/Llama-3.1-8B-Lexi-Uncensored-V2-GGUF",
-            filename="*Q8.gguf",
-            verbose=False,
-            n_gpu_layers=-1
-        )
+        self.chat_handler = None
+        self.use_vision = False
+        if not self.use_vision:
+            self.llm = Llama.from_pretrained(
+                repo_id="Orenguteng/Llama-3.1-8B-Lexi-Uncensored-V2-GGUF",
+                filename="*Q8.gguf",
+                verbose=False,
+                n_gpu_layers=-1,
+                # n_ctx=2048,
+                chat_format="chatml-function-calling"
+            )
+        else:
+            self.chat_handler = MoondreamChatHandler.from_pretrained(
+                "vikhyatk/moondream2",
+                filename="*mmproj*")
+            self.llm = Llama.from_pretrained(
+                repo_id="vikhyatk/moondream2",
+                filename="*text-model*",
+                verbose=False,
+                chat_handler=self.chat_handler,
+                n_gpu_layers=-1,
+                n_ctx=2048
+            )
+
         self.device = torch.device("cpu")
         self.tts = TTS("tts_models/multilingual/multi-dataset/xtts_v2").to(self.device)
         self.whisper_model = Model('base', n_threads=6)
+        self.functions = custom_functions.AssistantFunctions()
 
     def answer_speech(self, prompt, default_formatting=True):
         print("Infer start")
+        tools, tool_choice = convert_func_args()
+        sys_prompt = "A chat between a curious user and an artificial intelligence assistant. The assistant gives helpful, detailed, and polite answers to the user's questions. The assistant calls functions with appropriate input when necessary"
         output = self.llm.create_chat_completion(
             messages=[
                 {
                     "role": "system",
-                    "content": "You are a helpful assistant. "
-                               "If you are asked about the weather, only say one word: weather; "
-                               "If you are asked about time, only return one word: time; "
-                               "If you are asked about today's date, only say: date;"
-                               "If you are asked to list the current folder, say: list.",
+                    "content": sys_prompt,
                 },
                 {"role": "user", "content": prompt},
+            ],
+            tools=tools,
+            tool_choice="auto",
+            temperature=0.5,
+        )
+        print(output)
+        if "function_call" in output["choices"][0]["message"]:
+            print(output["choices"][0]["message"]["function_call"])
+            func_name = output["choices"][0]["message"]["function_call"]["name"].replace(":", "")
+            func_args = output["choices"][0]["message"]["function_call"]["arguments"]
+            print(func_args)
+            actual_func = getattr(self.functions, func_name)
+            out = actual_func(*func_args)
+        else:
+            out = output["choices"][0]["message"]
+            if default_formatting:
+                out = out["content"]
+        return out
+
+    def answer_speech_vision(self, prompt, img=None, default_formatting=True):  # vision
+        assert self.use_vision
+        print("Vision Infer start")
+        msg_content = [
+            {"type": "text", "text": prompt}
+        ]
+        if img is not None:
+            msg_content += [{"type": "image_url", "image_url": {"url": img}}]
+
+        output = self.llm.create_chat_completion(
+            messages=[
+                {
+                    "role": "system",
+                    "content": "You are a helpful computer assistant who also perfectly describes images. "
+                               "If you are asked about time, only return one word: time; "
+                               "If you are asked about the screen of the computer, describe what you see on the screen"
+                },
+                {"role": "user",
+                 "content": msg_content},
             ],
             temperature=0.5,
         )
         # print(output)
-        # print(json.dumps(output["choices"][0]["message"], indent=2))
         out = output["choices"][0]["message"]
         if default_formatting:
             out = out["content"]
@@ -61,6 +122,8 @@ class AssistantModelsMixin:
                 return datetime.now().strftime("It's %H %M")
             case "list":
                 return " ,".join(os.listdir())  # run a command
+            case "screen":
+                return "SCREEN"
             case _:
                 return response
 
@@ -72,12 +135,37 @@ class AssistantModelsMixin:
             playsound(temp_file.name)
         temp_file.close()
 
-    def process_answer(self, last_recorded_result=None):
+    def process_answer(self, last_recorded_result=None, voice=True):
         if last_recorded_result is None:
             last_recorded_result = self.last_recorded_result
-        helper_answer = self.answer_speech(last_recorded_result)
-        helper_answer = self.parse_output(helper_answer)
-        self.voice_speech(helper_answer)
+        if self.use_vision:
+            print("Grabbing a screenshot..")
+            img = self.screenshot()
+            helper_answer = self.answer_speech_vision(last_recorded_result, img=img)
+            helper_answer = self.parse_output(helper_answer)
+        else:
+            helper_answer = self.answer_speech(last_recorded_result)
+            helper_answer = self.parse_output(helper_answer)
+        if voice:
+            self.voice_speech(helper_answer)
+        else:
+            print("Printing silently:")
+            print(helper_answer)
+
+    @staticmethod
+    def screenshot():
+        img = ImageGrab.grab()
+        img_byte_arr = io.BytesIO()
+        img.save(img_byte_arr, format='PNG')
+        img_byte_arr = img_byte_arr.getvalue()
+        base64_data = base64.b64encode(img_byte_arr).decode('utf-8')
+        return f"data:image/png;base64,{base64_data}"
+
+    @staticmethod
+    def image_to_base64_data_uri(file_path):
+        with open(file_path, "rb") as img_file:
+            base64_data = base64.b64encode(img_file.read()).decode('utf-8')
+            return f"data:image/png;base64,{base64_data}"
 
 
 class NeonAssistant(AssistantModelsMixin, rumps.App):
@@ -160,6 +248,16 @@ class NeonAssistant(AssistantModelsMixin, rumps.App):
             self.process_answer(self.last_recorded_result)
             print("Recording stopped.")  # Replace with any cleanup logic if necessary
 
+    def debug_run(self, prompt):
+        print("debug run")
+        self.process_answer(prompt, voice=False)
+
 
 if __name__ == "__main__":
-    NeonAssistant().run()
+    debug = True
+
+    assistant = NeonAssistant()
+    if debug:
+        assistant.debug_run("What is today's date?")
+    else:
+        assistant.run()
