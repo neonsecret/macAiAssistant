@@ -13,6 +13,7 @@ from PIL import ImageGrab
 from TTS.api import TTS
 from llama_cpp import Llama
 from llama_cpp.llama_chat_format import Llava15ChatHandler, Llava16ChatHandler, MoondreamChatHandler
+from llama_cpp.llama_tokenizer import LlamaHFTokenizer
 from playsound import playsound
 from pywhispercpp.model import Model
 
@@ -27,13 +28,21 @@ class AssistantModelsMixin:
         self.chat_handler = None
         self.use_vision = False
         if not self.use_vision:
+            # self.llm = Llama.from_pretrained(
+            #     repo_id="Orenguteng/Llama-3.1-8B-Lexi-Uncensored-V2-GGUF",
+            #     filename="*F16*",
+            #     verbose=False,
+            #     n_gpu_layers=-1,
+            #     n_ctx=2048,
+            #     chat_format="chatml-function-calling"
+            # )
             self.llm = Llama.from_pretrained(
-                repo_id="Orenguteng/Llama-3.1-8B-Lexi-Uncensored-V2-GGUF",
-                filename="*Q8.gguf",
-                verbose=False,
+                repo_id="meetkai/functionary-small-v2.2-GGUF",
+                filename="functionary-small-v2.2.q4_0.gguf",
+                chat_format="functionary-v2",
+                tokenizer=LlamaHFTokenizer.from_pretrained("meetkai/functionary-small-v2.2-GGUF"),
                 n_gpu_layers=-1,
-                # n_ctx=2048,
-                chat_format="chatml-function-calling"
+                verbose=False
             )
         else:
             self.chat_handler = MoondreamChatHandler.from_pretrained(
@@ -56,7 +65,8 @@ class AssistantModelsMixin:
     def answer_speech(self, prompt, default_formatting=True):
         print("Infer start")
         tools, tool_choice = convert_func_args()
-        sys_prompt = "A chat between a curious user and an artificial intelligence assistant. The assistant gives helpful, detailed, and polite answers to the user's questions. The assistant calls functions with appropriate input when necessary"
+        sys_prompt = ("You are a helpful assistant. You give helpful, detailed, and polite answers to the user's "
+                      "questions. You may call functions with appropriate input when necessary.")
         output = self.llm.create_chat_completion(
             messages=[
                 {
@@ -73,7 +83,8 @@ class AssistantModelsMixin:
         if "function_call" in output["choices"][0]["message"]:
             print(output["choices"][0]["message"]["function_call"])
             func_name = output["choices"][0]["message"]["function_call"]["name"].replace(":", "")
-            func_args = output["choices"][0]["message"]["function_call"]["arguments"]
+            func_args = output["choices"][0]["message"]["function_call"]["arguments"].strip()
+            func_args = {} if func_args == "{}" else func_args
             print(func_args)
             actual_func = getattr(self.functions, func_name)
             out = actual_func(*func_args)
@@ -258,6 +269,6 @@ if __name__ == "__main__":
 
     assistant = NeonAssistant()
     if debug:
-        assistant.debug_run("What is today's date?")
+        assistant.debug_run("What operation system am I using?")
     else:
         assistant.run()

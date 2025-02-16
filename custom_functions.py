@@ -1,14 +1,26 @@
+import os
 from datetime import datetime
 import inspect
 import json
 
 
 class AssistantFunctions:
-    def get_time(self):
+    @staticmethod
+    def get_time() -> str:
         return datetime.now().strftime("It's %H %M")
 
-    def get_date(self):
+    @staticmethod
+    def get_date() -> str:
         return datetime.now().strftime("It's %A the %d, %B %Y")
+
+    @staticmethod
+    def search_online(query_to_search: str) -> str:
+        return "Searched."
+
+    @staticmethod
+    def run_terminal_command(command_to_run: str) -> str:
+        if command_to_run.split()[0] in ["uname"]:
+            return os.system(command_to_run)
 
 
 def convert_class_functions_to_dict(cls):
