@@ -18,7 +18,26 @@ from playsound import playsound
 from pywhispercpp.model import Model
 
 import custom_functions
-from custom_functions import convert_func_args
+from custom_functions import convert_func_args_llama
+import xml.etree.ElementTree as ET
+
+LLM_SYS_PROMPT = f"""
+You are an AI assistant with tool access. Follow these steps:
+
+1. Analyze user request
+2. Choose appropriate tool if needed
+3. Format tool call as XML
+4. Process tool response
+5. Deliver final answer
+
+Available functions to call:
+{custom_functions.class_to_r1_function_schema(custom_functions.AssistantFunctions)}
+
+Output format:
+<tool_name>
+<parameter>value</parameter>
+</tool_name>
+"""
 
 
 class AssistantModelsMixin:
@@ -27,7 +46,7 @@ class AssistantModelsMixin:
         self.last_recorded_result = None
         self.chat_handler = None
         self.use_vision = False
-        if not self.use_vision:
+        if not self.use_vision:  # just LLM
             # self.llm = Llama.from_pretrained(
             #     repo_id="Orenguteng/Llama-3.1-8B-Lexi-Uncensored-V2-GGUF",
             #     filename="*F16*",
@@ -37,10 +56,9 @@ class AssistantModelsMixin:
             #     chat_format="chatml-function-calling"
             # )
             self.llm = Llama.from_pretrained(
-                repo_id="meetkai/functionary-small-v2.2-GGUF",
-                filename="functionary-small-v2.2.q4_0.gguf",
-                chat_format="functionary-v2",
-                tokenizer=LlamaHFTokenizer.from_pretrained("meetkai/functionary-small-v2.2-GGUF"),
+                repo_id="bartowski/DeepSeek-R1-Distill-Qwen-7B-GGUF",
+                filename="*Q4_K_M*",
+                n_ctx=8192,
                 n_gpu_layers=-1,
                 verbose=False
             )
@@ -62,37 +80,43 @@ class AssistantModelsMixin:
         self.whisper_model = Model('base', n_threads=6)
         self.functions = custom_functions.AssistantFunctions()
 
-    def answer_speech(self, prompt, default_formatting=True):
-        print("Infer start")
-        tools, tool_choice = convert_func_args()
-        sys_prompt = ("You are a helpful assistant. You give helpful, detailed, and polite answers to the user's "
-                      "questions. You may call functions with appropriate input when necessary.")
-        output = self.llm.create_chat_completion(
+    def dialogue_call(self, user_input: str, default_formatting: bool = True):
+        def execute_tool(tool_xml):
+            try:
+                root = ET.fromstring(tool_xml)
+                function_name = root.text  # should be tag actually
+                params = {child.tag: child.text for child in root}
+                return function_name, params
+
+            except ET.ParseError:
+                return "Invalid XML format"
+
+        response = self.llm.create_chat_completion(
             messages=[
                 {
                     "role": "system",
-                    "content": sys_prompt,
+                    "content": LLM_SYS_PROMPT,
                 },
-                {"role": "user", "content": prompt},
+                {"role": "user", "content": user_input},
             ],
-            tools=tools,
-            tool_choice="auto",
             temperature=0.5,
+            stop=["<|im_end|>"]
         )
-        print(output)
-        if "function_call" in output["choices"][0]["message"]:
-            print(output["choices"][0]["message"]["function_call"])
-            func_name = output["choices"][0]["message"]["function_call"]["name"].replace(":", "")
-            func_args = output["choices"][0]["message"]["function_call"]["arguments"].strip()
-            func_args = {} if func_args == "{}" else func_args
-            print(func_args)
-            actual_func = getattr(self.functions, func_name)
-            out = actual_func(*func_args)
-        else:
-            out = output["choices"][0]["message"]
-            if default_formatting:
-                out = out["content"]
-        return out
+        full_response = response["choices"][0]["message"]["content"]
+        print(full_response)
+
+        # thought = full_response.split("<think>")[1].split("</think>")[0]
+        # print(f"Model Reasoning: {thought}")
+
+        tool_call = full_response.split("</think>")[1].strip()
+        print(tool_call)
+        func_name, params = execute_tool(tool_call)
+        print("Tool: ", func_name, params)
+        method = getattr(custom_functions.AssistantFunctions, func_name)
+        output = method(**params)
+        print("Output: ", output)
+
+        return "hehe"
 
     def answer_speech_vision(self, prompt, img=None, default_formatting=True):  # vision
         assert self.use_vision
@@ -122,22 +146,6 @@ class AssistantModelsMixin:
             out = out["content"]
         return out
 
-    @staticmethod
-    def parse_output(response):
-        match response.lower().strip():
-            case "weather":
-                return "It's sunny in Plzen"  # TODO Get weather
-            case "date":
-                return datetime.now().strftime("It's %A the %d, %B %Y")
-            case "time":
-                return datetime.now().strftime("It's %H %M")
-            case "list":
-                return " ,".join(os.listdir())  # run a command
-            case "screen":
-                return "SCREEN"
-            case _:
-                return response
-
     def voice_speech(self, prompt, playback=True):
         temp_file = tempfile.NamedTemporaryFile(suffix=".wav")
         self.tts.tts_to_file(text=prompt, speaker="Ana Florence", language="en", file_path=temp_file.name)
@@ -153,14 +161,13 @@ class AssistantModelsMixin:
             print("Grabbing a screenshot..")
             img = self.screenshot()
             helper_answer = self.answer_speech_vision(last_recorded_result, img=img)
-            helper_answer = self.parse_output(helper_answer)
+            # helper_answer = self.parse_output(helper_answer)
         else:
-            helper_answer = self.answer_speech(last_recorded_result)
-            helper_answer = self.parse_output(helper_answer)
+            helper_answer = self.dialogue_call(last_recorded_result)
         if voice:
             self.voice_speech(helper_answer)
         else:
-            print("Printing silently:")
+            print("Printing silently helper answer:")
             print(helper_answer)
 
     @staticmethod
@@ -269,6 +276,6 @@ if __name__ == "__main__":
 
     assistant = NeonAssistant()
     if debug:
-        assistant.debug_run("What operation system am I using?")
+        assistant.debug_run("Find out the current year with an online search.")
     else:
         assistant.run()
