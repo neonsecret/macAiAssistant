@@ -3,7 +3,7 @@ from datetime import datetime
 import inspect
 import json
 import subprocess
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, get_type_hints
 
 import xml.etree.ElementTree as ET
 from xml.dom import minidom
@@ -25,7 +25,7 @@ class AssistantFunctions:
 
     ### System-related functions
     @staticmethod
-    def run_other_terminal_command(command_to_run: str) -> str:
+    def run_terminal_command(command_to_run: str) -> str:
         if command_to_run.split()[0] in ["uname"]:
             return os.system(command_to_run)
 
@@ -99,215 +99,69 @@ class AssistantFunctions:
         """Launch application or website"""
         bash_script = f'osascript -e \'do shell script "open \\"{url}\\""\''
         try:
-            subprocess.run(bash_script, check=True)
+            os.system(bash_script)
             return True
         except subprocess.CalledProcessError as e:
             print(f"Launch error: {e.stderr}")
             return False
 
 
-def convert_class_functions_to_dict(cls):
+def create_tool_schema(cls: type) -> list:
+    """Generate OpenAI-compatible tool schema from class static methods"""
     tools = []
-    for name, func in inspect.getmembers(cls, predicate=inspect.isfunction):
-        # Skip special and private methods
-        if name.startswith("__") and name.endswith("__"):
-            continue
+    type_dict = {
+        "int": "integer",
+        "str": "string",
+        "bool": "boolean"
+    }
 
-        # Inspect the signature of the function to get parameters
-        signature = inspect.signature(func)
-        parameters = {
-            "type": "object",
-            "title": name,
-            "properties": {},
-            "required": []
-        }
+    for name, method in inspect.getmembers(cls, predicate=inspect.isfunction):
+        sig = inspect.signature(method)
+        doc = inspect.getdoc(method) or f"Executes {name} function"
 
-        for param_name, param in signature.parameters.items():
-            if param_name == 'self':
-                continue  # Skip 'self' parameter
+        params = {"type": "object", "properties": {}, "required": []}
+        return_type = get_type_hints(method).get('return', 'str').__name__
+        if return_type in type_dict.keys():
+            return_type = type_dict[return_type]
 
-            param_type = "string"  # Default type
+        # Build parameter schema
+        for param in sig.parameters.values():
+            if param.name != 'self':
+                param_type = str(param.annotation.__name__) if param.annotation != param.empty else 'string'
+                if param_type in type_dict.keys():
+                    param_type = type_dict[param_type]
+                params['properties'][param.name] = {"type": param_type}
+                if param.default == param.empty:
+                    params['required'].append(param.name)
 
-            # Map Python types to JSON types
-            annotation = param.annotation
-            if annotation != inspect.Parameter.empty:
-                if annotation == int:
-                    param_type = "integer"
-                elif annotation == float:
-                    param_type = "number"
-                elif annotation == bool:
-                    param_type = "boolean"
-                elif annotation == list:
-                    param_type = "array"
-                elif annotation == dict:
-                    param_type = "object"
-                # Add more type mappings as needed
-
-            parameters["properties"][param_name] = {
-                "title": param_name.capitalize(),
-                "type": param_type
-            }
-
-            if param.default == inspect.Parameter.empty:
-                parameters["required"].append(param_name)
-
-        function_dict = {
+        tools.append({
             "type": "function",
             "function": {
                 "name": name,
-                "parameters": parameters
+                "description": doc,
+                "parameters": params,
+                "returns": {"type": str(return_type)}
             }
-        }
-
-        tools.append(function_dict)
+        })
 
     return tools
 
 
-def convert_func_args_llama():
-    tools = convert_class_functions_to_dict(AssistantFunctions)
-    if tools:
-        tool_choice = [{
-            "type": "function",
-            "function": {
-                "name": tool["function"]["name"]  # Selecting the first function as an example
-            }
-        } for tool in tools]
-    else:
-        tool_choice = {}
-    return tools, tool_choice
-    # Display the tools and the selected tool choice
+def execute_function_call(tool_call: Dict[str, Any]) -> str:
+    """Execute a function call using the AssistantFunctions class"""
+    print(f"Tool call: {tool_call}")
+    func_name = tool_call['function']['name']
+    args = tool_call['function'].get('arguments', {})
+    args = eval(args)
+    print(f"Executing {func_name} with args {args}")
 
-
-def class_to_r1_function_schema(cls: type) -> str:
-    """
-    Convert a Python class with static methods to an R1 function calling XML schema.
-
-    This function iterates over the class's __dict__, extracts static methods,
-    retrieves each method's signature, docstring, parameter types, defaults,
-    and return type annotations and builds an XML representation.
-
-    Args:
-        cls: The class containing static methods.
-
-    Returns:
-        A pretty-printed XML string compatible with R1 function calling.
-    """
-    # Map Python type annotations to XML schema types.
-    type_mapping = {
-        int: "integer",
-        float: "number",
-        str: "string",
-        bool: "boolean",
-        list: "array",
-        dict: "object"
-    }
-
-    root = ET.Element("tools")
-
-    # Iterate through class attributes using __dict__.
-    for name, member in cls.__dict__.items():
-        # Check if the member is a static method.
-        if not isinstance(member, staticmethod):
-            continue
-
-        # Get the underlying function.
-        func = member.__func__
-
-        # Extract the function's signature and docstring.
-        sig = inspect.signature(func)
-        doc = inspect.getdoc(func) or ""
-
-        tool = ET.SubElement(root, "tool")
-        ET.SubElement(tool, "name").text = name
-
-        # Use the first line of the docstring as the description.
-        description_text = doc.splitlines()[0] if doc else ""
-        ET.SubElement(tool, "description").text = description_text
-
-        parameters = ET.SubElement(tool, "parameters")
-
-        # Process all parameters defined in the function.
-        for param in sig.parameters.values():
-            param_node = ET.SubElement(parameters, "parameter")
-            ET.SubElement(param_node, "name").text = param.name
-
-            # Map the type annotation if it exists; default to "string".
-            param_type = type_mapping.get(param.annotation, "string")
-            ET.SubElement(param_node, "type").text = param_type
-
-            # Extract parameter description from the docstring.
-            param_desc = parse_param_description(doc, param.name)
-            if not param_desc:
-                param_desc = f"{param.name} parameter"
-            ET.SubElement(param_node, "description").text = param_desc
-
-            if param.default != inspect.Parameter.empty:
-                ET.SubElement(param_node, "default").text = str(param.default)
-
-        # Handle the return annotation if provided.
-        if sig.return_annotation != inspect.Signature.empty and sig.return_annotation is not None:
-            returns = ET.SubElement(tool, "returns")
-            return_type = type_mapping.get(sig.return_annotation, "object")
-            ET.SubElement(returns, "type").text = return_type
-            return_desc = parse_return_description(doc)
-            if not return_desc:
-                return_desc = "Function result"
-            ET.SubElement(returns, "description").text = return_desc
-
-    # Generate a pretty-printed XML string.
-    xml_str = ET.tostring(root, encoding="unicode")
-    pretty_xml = minidom.parseString(xml_str).toprettyxml(indent="  ")
-    return pretty_xml
-
-
-def parse_param_description(doc: str, param_name: str) -> str:
-    """
-    Extract the description for a parameter from the docstring.
-
-    Expects the docstring to contain lines formatted as:
-      :param <param_name>: <description>
-
-    Args:
-        doc: The complete docstring.
-        param_name: Name of the parameter.
-
-    Returns:
-        The extracted description for the parameter, or an empty string.
-    """
-    if not doc:
-        return ""
-    lines = doc.splitlines()
-    for line in lines:
-        line = line.strip()
-        if line.startswith(f":param {param_name}:"):
-            # Extract everything after the param definition.
-            return line.split(":", 2)[-1].strip()
-    return ""
-
-
-def parse_return_description(doc: str) -> str:
-    """
-    Extract the return description from the docstring.
-
-    Expects the docstring to contain a line formatted as:
-      :return: <description>
-
-    Args:
-        doc: The complete docstring.
-
-    Returns:
-        The extracted return description, or an empty string.
-    """
-    if not doc:
-        return ""
-    lines = doc.splitlines()
-    for line in lines:
-        line = line.strip()
-        if line.startswith(":return:"):
-            return line.split(":", 1)[-1].strip()
-    return ""
+    if hasattr(AssistantFunctions, func_name):
+        method = getattr(AssistantFunctions, func_name)
+        return method(**args)
+    raise ValueError(f"Function {func_name} not found in AssistantFunctions")
 
 
 if __name__ == "__main__":
-    print(class_to_r1_function_schema(AssistantFunctions))
+    tools = create_tool_schema(AssistantFunctions)
+    for tool in tools:
+        print(tool)

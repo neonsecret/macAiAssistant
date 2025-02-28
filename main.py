@@ -17,27 +17,10 @@ from llama_cpp.llama_tokenizer import LlamaHFTokenizer
 from playsound import playsound
 from pywhispercpp.model import Model
 
-import custom_functions
-from custom_functions import convert_func_args_llama
-import xml.etree.ElementTree as ET
+from custom_functions import execute_function_call, create_tool_schema, AssistantFunctions
 
-LLM_SYS_PROMPT = f"""
-You are an AI assistant with tool access. Follow these steps:
-
-1. Analyze user request
-2. Choose appropriate tool if needed
-3. Format tool call as XML
-4. Process tool response
-5. Deliver final answer
-
-Available functions to call:
-{custom_functions.class_to_r1_function_schema(custom_functions.AssistantFunctions)}
-
-Output format:
-<tool_name>
-<parameter>value</parameter>
-</tool_name>
-"""
+LLM_TOOLS = create_tool_schema(AssistantFunctions)
+LLM_SYS_PROMPT = "You are a helpful assistant."
 
 
 class AssistantModelsMixin:
@@ -56,9 +39,11 @@ class AssistantModelsMixin:
             #     chat_format="chatml-function-calling"
             # )
             self.llm = Llama.from_pretrained(
-                repo_id="bartowski/DeepSeek-R1-Distill-Qwen-7B-GGUF",
-                filename="*Q4_K_M*",
-                n_ctx=8192,
+                repo_id="meetkai/functionary-medium-v3.1-GGUF",
+                filename="*q4*",
+                # n_ctx=8192,
+                chat_format="functionary-v2",
+                tokenizer=LlamaHFTokenizer.from_pretrained("meetkai/functionary-medium-v3.1-GGUF"),
                 n_gpu_layers=-1,
                 verbose=False
             )
@@ -78,45 +63,33 @@ class AssistantModelsMixin:
         self.device = torch.device("cpu")
         self.tts = TTS("tts_models/multilingual/multi-dataset/xtts_v2").to(self.device)
         self.whisper_model = Model('base', n_threads=6)
-        self.functions = custom_functions.AssistantFunctions()
+        self.functions = AssistantFunctions()
 
     def dialogue_call(self, user_input: str, default_formatting: bool = True):
-        def execute_tool(tool_xml):
-            try:
-                root = ET.fromstring(tool_xml)
-                function_name = root.text  # should be tag actually
-                params = {child.tag: child.text for child in root}
-                return function_name, params
-
-            except ET.ParseError:
-                return "Invalid XML format"
-
         response = self.llm.create_chat_completion(
             messages=[
-                {
-                    "role": "system",
-                    "content": LLM_SYS_PROMPT,
-                },
+                # {
+                #     "role": "system",
+                #     "content": LLM_SYS_PROMPT,
+                # },
                 {"role": "user", "content": user_input},
             ],
             temperature=0.5,
-            stop=["<|im_end|>"]
+            tools=LLM_TOOLS,
+            tool_choice="auto"
         )
-        full_response = response["choices"][0]["message"]["content"]
+        full_response = response["choices"][0]["message"]
         print(full_response)
 
-        # thought = full_response.split("<think>")[1].split("</think>")[0]
-        # print(f"Model Reasoning: {thought}")
+        message = response['choices'][0]['message']
+        if 'tool_calls' in message:
+            for tool_call in message['tool_calls']:
+                result = execute_function_call(tool_call)
+                print(f"Function {tool_call['function']['name']} returned: {result}")
+        else:
+            print(message['content'])
 
-        tool_call = full_response.split("</think>")[1].strip()
-        print(tool_call)
-        func_name, params = execute_tool(tool_call)
-        print("Tool: ", func_name, params)
-        method = getattr(custom_functions.AssistantFunctions, func_name)
-        output = method(**params)
-        print("Output: ", output)
-
-        return "hehe"
+        return result
 
     def answer_speech_vision(self, prompt, img=None, default_formatting=True):  # vision
         assert self.use_vision
