@@ -6,7 +6,7 @@ import threading
 import wave
 import os
 from contextlib import contextmanager
-
+import datetime
 import pyaudio
 import rumps
 import torch
@@ -23,7 +23,12 @@ from custom_functions import execute_function_call, create_tool_schema, Assistan
 
 sys.path.append("functionary")
 LLM_TOOLS = create_tool_schema(AssistantFunctions)
-LLM_SYS_PROMPT = "You are a helpful assistant."
+LLM_SYS_PROMPT = f"""You are a system management assistant with access to functions.
+Current date: {datetime.datetime.now()}.
+If multiple functions could apply, choose the one that best addresses the query’s intent.
+If you require to use the command prompt to run a command or retrieve some information there is no function for, 
+use the run_terminal_command function.
+Always ensure that your responses and function calls are safe, accurate, and contextually relevant."""
 
 
 @contextmanager
@@ -85,33 +90,56 @@ class AssistantModelsMixin:
         self.whisper_model = Model('base', n_threads=6)
         self.functions = AssistantFunctions()
 
-    def dialogue_call(self, user_input: str, default_formatting: bool = True):
-        messages = [
-            {'role': 'user', 'content': user_input},
-            {'role': 'assistant'}
-        ]
-        prompt_str = self.prompt_template.get_prompt_from_messages(messages, LLM_TOOLS)
-        token_ids = self.tokenizer.encode(prompt_str)
+    def dialogue_call(self, user_input: str = None, messages: list = None, is_function_call: bool = True):
+        # Firstly, the user prompts the llm for a function call
+        # After the function call, llm receives the function output and provides a textual interpretation
 
-        gen_tokens = []
-        # Get list of stop_tokens
-        stop_token_ids = [
-            self.tokenizer.encode(token)[-1]
-            for token in self.prompt_template.get_stop_tokens_for_generation()
-        ]
-        for token_id in self.llm.generate(token_ids, temp=0):
-            if token_id in stop_token_ids:
-                break
-            gen_tokens.append(token_id)
+        if not messages:  # this is a function call
+            messages = [
+                {"role": "system", "content": LLM_SYS_PROMPT},
+                {'role': 'user', 'content': user_input},
+                {'role': 'assistant'}
+            ]
+        if is_function_call:
+            prompt_str = self.prompt_template.get_prompt_from_messages(messages, LLM_TOOLS)
+            token_ids = self.tokenizer.encode(prompt_str)
 
-        llm_output = self.tokenizer.decode(gen_tokens)
-        result = self.prompt_template.parse_assistant_response(llm_output)
+            gen_tokens = []
+            # Get list of stop_tokens
+            stop_token_ids = [
+                self.tokenizer.encode(token)[-1]
+                for token in self.prompt_template.get_stop_tokens_for_generation()
+            ]
+            for token_id in self.llm.generate(token_ids, temp=0.8):
+                if token_id in stop_token_ids:
+                    break
+                gen_tokens.append(token_id)
 
-        print(result)
-        for tool_call in result['tool_calls']:
-            result = execute_function_call(tool_call)
-            print(f"Function {tool_call['function']['name']} returned: {result}")
+            llm_output = self.tokenizer.decode(gen_tokens)
+            initial_result = self.prompt_template.parse_assistant_response(llm_output)
+            if 'tool_calls' in initial_result:
+                for tool_call in initial_result['tool_calls']:
+                    result = execute_function_call(tool_call)
+                    print(f"Function {tool_call['function']['name']} returned: {result}")
+            else:
+                raise NotImplementedError(str(initial_result))
+        else:
+            print(messages)
+            result = self.llm.create_chat_completion(
+                messages,
+                # temperature=0.7
+            )
+            result = result["choices"][0]["message"]["content"]
 
+        print("\n", is_function_call, result)
+        if is_function_call:
+            messages = [
+                {"role": "system", "content": LLM_SYS_PROMPT},
+                {'role': 'user', 'content': user_input},
+                initial_result,
+                {'role': 'function', "name": tool_call['function']['name'], 'content': result},
+            ]
+            return self.dialogue_call(messages=messages, is_function_call=False)
         return result
 
     def answer_speech_vision(self, prompt, img=None, default_formatting=True):  # vision
@@ -266,10 +294,10 @@ class NeonAssistant(AssistantModelsMixin, rumps.App):
         print("debug run")
         self.process_answer(prompt, voice=False)
 
-    def __del__(self):
+    def __del__(self):  # destructor
         self.llm._sampler.close()
         self.llm.close()
-        print("die")
+        # print("die")
 
 
 if __name__ == "__main__":
@@ -277,7 +305,7 @@ if __name__ == "__main__":
 
     assistant = NeonAssistant()
     if debug:
-        assistant.debug_run("Find out the current year with an online search.")
+        assistant.debug_run("Google who is the current president of France")
     else:
         assistant.run()
     del assistant  # cleanup

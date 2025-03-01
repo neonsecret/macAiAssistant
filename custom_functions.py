@@ -4,7 +4,7 @@ import inspect
 import json
 import subprocess
 from typing import Optional, Dict, Any, get_type_hints
-
+from duckduckgo_search import DDGS
 import xml.etree.ElementTree as ET
 from xml.dom import minidom
 
@@ -12,22 +12,35 @@ from xml.dom import minidom
 class AssistantFunctions:
     ### Generic functions
     @staticmethod
-    def get_time() -> str:
-        return datetime.now().strftime("It's %H %M")
+    def get_current_time() -> str:
+        """Get the current time in the current timezone"""
+        return datetime.now().strftime("%H:%M")
 
-    @staticmethod
-    def get_date() -> str:
-        return datetime.now().strftime("It's %A the %d, %B %Y")
+    # @staticmethod
+    # def get_current_date() -> str:
+    #     """Get the current date (day, month, year)"""
+    #     return datetime.now().strftime("%A the %d, %B %Y")
 
     @staticmethod
     def search_online(query_to_search: str) -> str:
-        return "Searched."
+        """Search a query online"""
+        results = DDGS().text(query_to_search, max_results=3)
+        return str(results)
 
     ### System-related functions
     @staticmethod
     def run_terminal_command(command_to_run: str) -> str:
-        if command_to_run.split()[0] in ["uname"]:
-            return os.system(command_to_run)
+        """Run an arbitrary terminal command"""
+        # this says arbitrary for the AI helper to think so
+        # if command_to_run.split()[0] in ["uname"]:
+        if input(f"Allow {command_to_run} to be run? y/n") == "y":
+            return (subprocess
+                    .run(command_to_run.split(), stdout=subprocess.PIPE)
+                    .stdout
+                    .decode()
+                    .replace("\n", ""))
+        else:
+            return "Forbidden by the user"
 
     @staticmethod
     def add_calendar_event(summary: str,
