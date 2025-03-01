@@ -1,10 +1,11 @@
 import base64
 import io
-import os
+import sys
 import tempfile
 import threading
 import wave
-from datetime import datetime
+import os
+from contextlib import contextmanager
 
 import pyaudio
 import rumps
@@ -16,11 +17,27 @@ from llama_cpp.llama_chat_format import Llava15ChatHandler, Llava16ChatHandler, 
 from llama_cpp.llama_tokenizer import LlamaHFTokenizer
 from playsound import playsound
 from pywhispercpp.model import Model
+from transformers import AutoTokenizer
 
 from custom_functions import execute_function_call, create_tool_schema, AssistantFunctions
 
+sys.path.append("functionary")
 LLM_TOOLS = create_tool_schema(AssistantFunctions)
 LLM_SYS_PROMPT = "You are a helpful assistant."
+
+
+@contextmanager
+def change_dir(destination):
+    origin = os.getcwd()
+    os.chdir(destination)
+    try:
+        yield
+    finally:
+        os.chdir(origin)
+
+
+with change_dir("functionary"):
+    from functionary.prompt_template import get_prompt_template_from_tokenizer
 
 
 class AssistantModelsMixin:
@@ -39,14 +56,17 @@ class AssistantModelsMixin:
             #     chat_format="chatml-function-calling"
             # )
             self.llm = Llama.from_pretrained(
-                repo_id="meetkai/functionary-medium-v3.1-GGUF",
-                filename="*q4*",
-                # n_ctx=8192,
-                chat_format="functionary-v2",
-                tokenizer=LlamaHFTokenizer.from_pretrained("meetkai/functionary-medium-v3.1-GGUF"),
+                repo_id="meetkai/functionary-small-v2.5-GGUF",
+                filename="*Q4*",
+                n_ctx=8192,
                 n_gpu_layers=-1,
                 verbose=False
             )
+            self.tokenizer = AutoTokenizer.from_pretrained(
+                "meetkai/functionary-small-v2.5-GGUF", legacy=True
+            )
+            with change_dir("functionary"):
+                self.prompt_template = get_prompt_template_from_tokenizer(self.tokenizer)
         else:
             self.chat_handler = MoondreamChatHandler.from_pretrained(
                 "vikhyatk/moondream2",
@@ -66,28 +86,31 @@ class AssistantModelsMixin:
         self.functions = AssistantFunctions()
 
     def dialogue_call(self, user_input: str, default_formatting: bool = True):
-        response = self.llm.create_chat_completion(
-            messages=[
-                # {
-                #     "role": "system",
-                #     "content": LLM_SYS_PROMPT,
-                # },
-                {"role": "user", "content": user_input},
-            ],
-            temperature=0.5,
-            tools=LLM_TOOLS,
-            tool_choice="auto"
-        )
-        full_response = response["choices"][0]["message"]
-        print(full_response)
+        messages = [
+            {'role': 'user', 'content': user_input},
+            {'role': 'assistant'}
+        ]
+        prompt_str = self.prompt_template.get_prompt_from_messages(messages, LLM_TOOLS)
+        token_ids = self.tokenizer.encode(prompt_str)
 
-        message = response['choices'][0]['message']
-        if 'tool_calls' in message:
-            for tool_call in message['tool_calls']:
-                result = execute_function_call(tool_call)
-                print(f"Function {tool_call['function']['name']} returned: {result}")
-        else:
-            print(message['content'])
+        gen_tokens = []
+        # Get list of stop_tokens
+        stop_token_ids = [
+            self.tokenizer.encode(token)[-1]
+            for token in self.prompt_template.get_stop_tokens_for_generation()
+        ]
+        for token_id in self.llm.generate(token_ids, temp=0):
+            if token_id in stop_token_ids:
+                break
+            gen_tokens.append(token_id)
+
+        llm_output = self.tokenizer.decode(gen_tokens)
+        result = self.prompt_template.parse_assistant_response(llm_output)
+
+        print(result)
+        for tool_call in result['tool_calls']:
+            result = execute_function_call(tool_call)
+            print(f"Function {tool_call['function']['name']} returned: {result}")
 
         return result
 
@@ -243,6 +266,11 @@ class NeonAssistant(AssistantModelsMixin, rumps.App):
         print("debug run")
         self.process_answer(prompt, voice=False)
 
+    def __del__(self):
+        self.llm._sampler.close()
+        self.llm.close()
+        print("die")
+
 
 if __name__ == "__main__":
     debug = True
@@ -252,3 +280,4 @@ if __name__ == "__main__":
         assistant.debug_run("Find out the current year with an online search.")
     else:
         assistant.run()
+    del assistant  # cleanup
