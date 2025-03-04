@@ -1,14 +1,10 @@
-import os
-from datetime import datetime
 import inspect
-import json
+import os
 import subprocess
-from typing import Optional, Dict, Any, get_type_hints
-from duckduckgo_search import DDGS
-import xml.etree.ElementTree as ET
-from xml.dom import minidom
 
-from web_search import search_topic_RAG
+from datetime import datetime
+from typing import Dict, Any, get_type_hints
+from .web_search import search_topic_RAG
 
 
 class AssistantFunctions:

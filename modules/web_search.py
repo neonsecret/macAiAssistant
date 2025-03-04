@@ -36,7 +36,7 @@ def extract_user_text(html_content):
 
 
 def search_topic_RAG(query: str):
-    results = DDGS().text(query, max_results=3)
+    results = DDGS().text(query, max_results=5)
     total_set = set()
     for result in results:
         html_content = requests.get(result["href"]).content.decode()

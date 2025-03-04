@@ -8,18 +8,40 @@ import os
 from contextlib import contextmanager
 import datetime
 import pyaudio
-import rumps
 import torch
 from PIL import ImageGrab
 from TTS.api import TTS
 from llama_cpp import Llama
-from llama_cpp.llama_chat_format import Llava15ChatHandler, Llava16ChatHandler, MoondreamChatHandler
-from llama_cpp.llama_tokenizer import LlamaHFTokenizer
+from llama_cpp.llama_chat_format import MoondreamChatHandler
 from playsound import playsound
 from pywhispercpp.model import Model
 from transformers import AutoTokenizer
 
-from custom_functions import execute_function_call, create_tool_schema, AssistantFunctions
+from modules.custom_functions import execute_function_call, create_tool_schema, AssistantFunctions
+
+debug = True
+if sys.platform == "darwin":
+    import rumps
+else:
+    # dummy for windows
+    class rumps:
+        def __init__(self):
+            pass
+
+        @staticmethod
+        def clicked(*args, **kwargs):
+            return lambda x: x
+
+        @staticmethod
+        def alert(*args, **kwargs):
+            pass
+
+        class App:
+            def __init__(self, *args, **kwargs):
+                pass
+
+
+    debug = True  # debug only on windows
 
 sys.path.append("functionary")
 LLM_TOOLS = create_tool_schema(AssistantFunctions)
@@ -302,11 +324,9 @@ class NeonAssistant(AssistantModelsMixin, rumps.App):
 
 
 if __name__ == "__main__":
-    debug = True
-
     assistant = NeonAssistant()
     if debug:
-        assistant.debug_run("What is the latest released phone by apple?")
+        assistant.debug_run("How old is adrien brody?")
     else:
         assistant.run()
     del assistant  # cleanup

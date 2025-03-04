@@ -1,6 +1,6 @@
 import os
 
-from custom_functions import create_tool_schema, AssistantFunctions, execute_function_call
+from modules.custom_functions import create_tool_schema, AssistantFunctions, execute_function_call
 
 os.chdir("functionary")
 from llama_cpp import Llama
