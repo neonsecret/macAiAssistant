@@ -23,8 +23,9 @@ from custom_functions import execute_function_call, create_tool_schema, Assistan
 
 sys.path.append("functionary")
 LLM_TOOLS = create_tool_schema(AssistantFunctions)
+TODAY_DATE = datetime.datetime.now().strftime('%Y-%m-%d')
 LLM_SYS_PROMPT = f"""You are a system management assistant with access to functions.
-Current date: {datetime.datetime.now()}.
+Current date: {TODAY_DATE}.
 If multiple functions could apply, choose the one that best addresses the query’s intent.
 If you require to use the command prompt to run a command or retrieve some information there is no function for, 
 use the run_terminal_command function.
@@ -305,7 +306,7 @@ if __name__ == "__main__":
 
     assistant = NeonAssistant()
     if debug:
-        assistant.debug_run("How old is Adrien Brody?")
+        assistant.debug_run("What is the latest released phone by apple?")
     else:
         assistant.run()
     del assistant  # cleanup
