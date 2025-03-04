@@ -8,6 +8,8 @@ from duckduckgo_search import DDGS
 import xml.etree.ElementTree as ET
 from xml.dom import minidom
 
+from web_search import search_topic_RAG
+
 
 class AssistantFunctions:
     ### Generic functions
@@ -24,8 +26,9 @@ class AssistantFunctions:
     @staticmethod
     def search_online(query_to_search: str) -> str:
         """Search a query online"""
-        results = DDGS().text(query_to_search, max_results=3)
-        return str(results)
+        # results = DDGS().text(query_to_search, max_results=3)
+        # return str(results)
+        return search_topic_RAG(query_to_search)
 
     ### System-related functions
     @staticmethod

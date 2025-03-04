@@ -305,7 +305,7 @@ if __name__ == "__main__":
 
     assistant = NeonAssistant()
     if debug:
-        assistant.debug_run("Google who is the current president of France")
+        assistant.debug_run("How old is Adrien Brody?")
     else:
         assistant.run()
     del assistant  # cleanup
