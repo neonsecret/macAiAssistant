@@ -19,7 +19,7 @@ from transformers import AutoTokenizer
 
 from modules.custom_functions import execute_function_call, create_tool_schema, AssistantFunctions
 
-debug = True
+debug = False
 if sys.platform == "darwin":
     import rumps
 else:
@@ -167,7 +167,7 @@ class AssistantModelsMixin:
 
     def answer_speech_vision(self, prompt, img=None, default_formatting=True):  # vision
         assert self.use_vision
-        print("Vision Infer start")
+        # print("Vision Infer start")
         msg_content = [
             {"type": "text", "text": prompt}
         ]
@@ -197,7 +197,7 @@ class AssistantModelsMixin:
         temp_file = tempfile.NamedTemporaryFile(suffix=".wav")
         self.tts.tts_to_file(text=prompt, speaker="Ana Florence", language="en", file_path=temp_file.name)
         if playback:
-            print("Playing back")
+            # print("Playing back")
             playsound(temp_file.name)
         temp_file.close()
 
@@ -306,7 +306,7 @@ class NeonAssistant(AssistantModelsMixin, rumps.App):
             self.stream.close()
             self.audio.terminate()
             self.wav_file.close()
-            self.last_recorded_result = self.whisper_model.transcribe(self.temp_file.name)
+            self.last_recorded_result = self.whisper_model.transcribe(self.temp_file.name)[0].text
             print(self.last_recorded_result)
             self.temp_file.close()
             self.recording_thread = None
