@@ -3,12 +3,17 @@ import io
 import sys
 import tempfile
 import threading
+import time
 import wave
 import os
 from contextlib import contextmanager
 import datetime
+
+import matplotlib.pyplot as plt
+import numpy as np
 import pyaudio
 import torch
+import webrtcvad
 from PIL import ImageGrab
 from TTS.api import TTS
 from llama_cpp import Llama
@@ -19,7 +24,8 @@ from transformers import AutoTokenizer
 
 from modules.custom_functions import execute_function_call, create_tool_schema, AssistantFunctions
 
-debug = False
+DEBUG = False
+LIGHT_RUN = False
 if sys.platform == "darwin":
     import rumps
 else:
@@ -41,7 +47,7 @@ else:
                 pass
 
 
-    debug = True  # debug only on windows
+    DEBUG = True  # debug only on windows
 
 sys.path.append("functionary")
 LLM_TOOLS = create_tool_schema(AssistantFunctions)
@@ -74,43 +80,46 @@ class AssistantModelsMixin:
         self.last_recorded_result = None
         self.chat_handler = None
         self.use_vision = False
-        if not self.use_vision:  # just LLM
-            # self.llm = Llama.from_pretrained(
-            #     repo_id="Orenguteng/Llama-3.1-8B-Lexi-Uncensored-V2-GGUF",
-            #     filename="*F16*",
-            #     verbose=False,
-            #     n_gpu_layers=-1,
-            #     n_ctx=2048,
-            #     chat_format="chatml-function-calling"
-            # )
-            self.llm = Llama.from_pretrained(
-                repo_id="meetkai/functionary-small-v2.5-GGUF",
-                filename="*Q4*",
-                n_ctx=8192,
-                n_gpu_layers=-1,
-                verbose=False
-            )
-            self.tokenizer = AutoTokenizer.from_pretrained(
-                "meetkai/functionary-small-v2.5-GGUF", legacy=True
-            )
-            with change_dir("functionary"):
-                self.prompt_template = get_prompt_template_from_tokenizer(self.tokenizer)
-        else:
-            self.chat_handler = MoondreamChatHandler.from_pretrained(
-                "vikhyatk/moondream2",
-                filename="*mmproj*")
-            self.llm = Llama.from_pretrained(
-                repo_id="vikhyatk/moondream2",
-                filename="*text-model*",
-                verbose=False,
-                chat_handler=self.chat_handler,
-                n_gpu_layers=-1,
-                n_ctx=2048
-            )
+        if not LIGHT_RUN:
+            if not self.use_vision:  # just LLM
+                # self.llm = Llama.from_pretrained(
+                #     repo_id="Orenguteng/Llama-3.1-8B-Lexi-Uncensored-V2-GGUF",
+                #     filename="*F16*",
+                #     verbose=False,
+                #     n_gpu_layers=-1,
+                #     n_ctx=2048,
+                #     chat_format="chatml-function-calling"
+                # )
+                self.llm = Llama.from_pretrained(
+                    repo_id="meetkai/functionary-small-v2.5-GGUF",
+                    filename="*Q4*",
+                    n_ctx=8192,
+                    n_gpu_layers=-1,
+                    verbose=False
+                )
+                self.tokenizer = AutoTokenizer.from_pretrained(
+                    "meetkai/functionary-small-v2.5-GGUF", legacy=True
+                )
+                with change_dir("functionary"):
+                    self.prompt_template = get_prompt_template_from_tokenizer(self.tokenizer)
+            else:
+                self.chat_handler = MoondreamChatHandler.from_pretrained(
+                    "vikhyatk/moondream2",
+                    filename="*mmproj*")
+                self.llm = Llama.from_pretrained(
+                    repo_id="vikhyatk/moondream2",
+                    filename="*text-model*",
+                    verbose=False,
+                    chat_handler=self.chat_handler,
+                    n_gpu_layers=-1,
+                    n_ctx=2048
+                )
 
-        self.device = torch.device("cpu")
-        self.tts = TTS("tts_models/multilingual/multi-dataset/xtts_v2").to(self.device)
-        self.whisper_model = Model('base', n_threads=6)
+            self.device = torch.device("cpu")
+            self.tts = TTS("tts_models/multilingual/multi-dataset/xtts_v2").to(self.device)
+            self.whisper_model = Model('base', n_threads=6)
+        self.vad = webrtcvad.Vad()
+        self.vad.set_mode(3)
         self.functions = AssistantFunctions()
 
     def dialogue_call(self, user_input: str = None, messages: list = None, is_function_call: bool = True):
@@ -236,17 +245,21 @@ class AssistantModelsMixin:
 class NeonAssistant(AssistantModelsMixin, rumps.App):
     def __init__(self):
         super().__init__("NeonAssistant", icon="icon_pytorch.jpg")
-        self.menu = ["Start Recording", "Stop Recording"]
+        self.menu = ["Ask the assistant"]  #  "Stop Recording"
         # Adding menu items
         self.audio = None
         self.wav_file = None
         self.temp_file = None
 
-        # Initialize a flag to manage recording state
+        # Initialize flags to manage recording state
         self.is_recording = False
         self.recording_thread = None
         self.stream = None
         self.last_recorded_result = None
+        self.confidence_counter = None
+        self.user_talking = None
+
+        self.stop_event = threading.Event()
 
     @rumps.clicked("Start Recording")
     def start_recording(self, _):
@@ -267,12 +280,32 @@ class NeonAssistant(AssistantModelsMixin, rumps.App):
             self.temp_file = tempfile.NamedTemporaryFile(suffix=".wav")
             sample_rate = 16000
             bits_per_sample = 16
-            chunk_size = 1024
+            chunk_size = 480
             audio_format = pyaudio.paInt16
             channels = 1
+            self.confidence_counter = 0
+            self.user_talking = False
+
+            self.stop_event.clear()
 
             def callback(in_data, frame_count, time_info, status):
                 self.wav_file.writeframes(in_data)
+                # audio = np.frombuffer(in_data, dtype=np.int16
+                is_speech = self.vad.is_speech(in_data, sample_rate)
+                if not self.user_talking and is_speech:
+                    self.confidence_counter += 1
+                    if self.confidence_counter >= 5:
+                        self.user_talking = True
+                        self.confidence_counter = 0
+                        print("user talks now")
+                if self.user_talking and not is_speech:
+                    self.confidence_counter += 1
+                    if self.confidence_counter >= 5:
+                        print("user stopped talking")
+                        self.user_talking = False
+                        self.confidence_counter = 0
+
+                        self.stop_event.set()
                 return None, pyaudio.paContinue
 
             self.wav_file = wave.open(self.temp_file.name, 'wb')
@@ -286,32 +319,39 @@ class NeonAssistant(AssistantModelsMixin, rumps.App):
                                           input=True,
                                           frames_per_buffer=chunk_size,
                                           stream_callback=callback)
+            self.stream.start_stream()
+
+            # Main loop: wait until the stop event is signaled.
+            while not self.stop_event.is_set():
+                time.sleep(0.1)
+
+            self.cleanup_recording()
         # while
         #     print("Recording...")  # Replace with actual recording logic
         #     time.sleep(1)  # Simulate time taken to record
 
-    @rumps.clicked("Stop Recording")
-    def stop_recording(self, _):
-        if self.is_recording:
-            self.is_recording = False
-            self.stop_recording_thread()
-        else:
-            rumps.alert(title="Not Recording", message="No recording is in progress.")
+    # @rumps.clicked("Stop Recording")
+    # def stop_recording(self, _):
+    #     if self.is_recording:
+    #         self.cleanup_recording()
+    #     else:
+    #         rumps.alert(title="Not Recording", message="No recording is in progress.")
 
-    def stop_recording_thread(self):
-        if self.recording_thread:  # and self.recording_thread.is_alive():
-            self.recording_thread.join()
-            # Stop and close the audio stream
-            self.stream.stop_stream()
-            self.stream.close()
-            self.audio.terminate()
-            self.wav_file.close()
-            self.last_recorded_result = self.whisper_model.transcribe(self.temp_file.name)[0].text
-            print(self.last_recorded_result)
-            self.temp_file.close()
-            self.recording_thread = None
-            self.process_answer(self.last_recorded_result)
-            print("Recording stopped.")  # Replace with any cleanup logic if necessary
+    def cleanup_recording(self):
+        print("stopping rec thread")
+        # self.recording_thread.join()
+        self.stream.stop_stream()
+        self.stream.close()
+        self.audio.terminate()
+        self.wav_file.close()
+        self.last_recorded_result = self.whisper_model.transcribe(self.temp_file.name)[0].text
+        print(self.last_recorded_result)
+        self.temp_file.close()
+
+        self.is_recording = False
+        self.recording_thread = None
+        self.process_answer(self.last_recorded_result)
+        print("Recording stopped.")  # Replace with any cleanup logic if necessary
 
     def debug_run(self, prompt):
         print("debug run")
@@ -325,7 +365,7 @@ class NeonAssistant(AssistantModelsMixin, rumps.App):
 
 if __name__ == "__main__":
     assistant = NeonAssistant()
-    if debug:
+    if DEBUG:
         assistant.debug_run("How old is adrien brody?")
     else:
         assistant.run()
