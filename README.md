@@ -1,5 +1,5 @@
 Firstly install requirements: `pip install -r requirements.txt`\
-Recommended python version is 3.11, and do not use conda, use venv instead(it doesn't build with conda)\
+To install llama-cpp-python follow instructions here: https://github.com/abetlen/llama-cpp-python\
 To run using python: `python main.py`\
 To build a standalone app: `python setup.py py2app`\
 To run the app in console: `./dist/main.app/Contents/MacOS/main`\

@@ -1,0 +1,17 @@
+flask
+matplotlib
+numpy
+pyaudio
+webrtcvad
+torch
+torchaudio
+Pillow
+playsound
+transformers
+coqui-tts
+-e functionary
+git+https://github.com/absadiki/pywhispercpp
+sentence_transformers
+faiss-cpu
+duckduckgo_search
+beautifulsoup4

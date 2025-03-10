@@ -61,8 +61,8 @@ def search_topic_RAG(query: str):
     distances, indices = index.search(query_embedding, k)
     retrieved_docs = [documents[i] for i in indices[0]]
     return " ".join(retrieved_docs)
-    print(retrieved_docs)
+    # print(retrieved_docs)
 
 
 if __name__ == '__main__':
-    search_topic("How old is adrien brody?")
+    search_topic_RAG("How old is adrien brody?")

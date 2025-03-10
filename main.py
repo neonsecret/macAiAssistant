@@ -24,30 +24,8 @@ from transformers import AutoTokenizer
 
 from modules.custom_functions import execute_function_call, create_tool_schema, AssistantFunctions
 
-DEBUG = False
+DEBUG = True
 LIGHT_RUN = False
-if sys.platform == "darwin":
-    import rumps
-else:
-    # dummy for windows
-    class rumps:
-        def __init__(self):
-            pass
-
-        @staticmethod
-        def clicked(*args, **kwargs):
-            return lambda x: x
-
-        @staticmethod
-        def alert(*args, **kwargs):
-            pass
-
-        class App:
-            def __init__(self, *args, **kwargs):
-                pass
-
-
-    DEBUG = True  # debug only on windows
 
 sys.path.append("functionary")
 LLM_TOOLS = create_tool_schema(AssistantFunctions)
@@ -76,7 +54,7 @@ with change_dir("functionary"):
 
 class AssistantModelsMixin:
     def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
+        # super().__init__(*args, **kwargs)
         self.last_recorded_result = None
         self.chat_handler = None
         self.use_vision = False
@@ -242,9 +220,10 @@ class AssistantModelsMixin:
             return f"data:image/png;base64,{base64_data}"
 
 
-class NeonAssistant(AssistantModelsMixin, rumps.App):
-    def __init__(self):
-        super().__init__("NeonAssistant", icon="icon_pytorch.jpg")
+class NeonAssistant(AssistantModelsMixin):
+    def __init__(self, *args, **kwargs):
+        # super().__init__("NeonAssistant", icon="icon_pytorch.jpg")
+        super().__init__(*args, **kwargs)
         self.menu = ["Ask the assistant"]  #  "Stop Recording"
         # Adding menu items
         self.audio = None
@@ -261,13 +240,12 @@ class NeonAssistant(AssistantModelsMixin, rumps.App):
 
         self.stop_event = threading.Event()
 
-    @rumps.clicked("Start Recording")
-    def start_recording(self, _):
+    def start_recording(self):
         if not self.is_recording:
             self.is_recording = True
             self.start_recording_thread()
-        else:
-            rumps.alert(title="Already Recording", message="Recording is already in progress.")
+        # else:
+        #     rumps.alert(title="Already Recording", message="Recording is already in progress.")
 
     def start_recording_thread(self):
         # Start the recording process in a separate thread
@@ -365,8 +343,5 @@ class NeonAssistant(AssistantModelsMixin, rumps.App):
 
 if __name__ == "__main__":
     assistant = NeonAssistant()
-    if DEBUG:
-        assistant.debug_run("How old is adrien brody?")
-    else:
-        assistant.run()
+    assistant.debug_run("How old is adrien brody?")
     del assistant  # cleanup
