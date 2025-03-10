@@ -1,16 +1,15 @@
 import base64
+import datetime
 import io
+import os
+import pathlib
 import sys
 import tempfile
 import threading
 import time
 import wave
-import os
 from contextlib import contextmanager
-import datetime
 
-import matplotlib.pyplot as plt
-import numpy as np
 import pyaudio
 import torch
 import webrtcvad
@@ -229,6 +228,7 @@ class NeonAssistant(AssistantModelsMixin):
         self.audio = None
         self.wav_file = None
         self.temp_file = None
+        self.temp_dir = tempfile.TemporaryDirectory()
 
         # Initialize flags to manage recording state
         self.is_recording = False
@@ -255,7 +255,7 @@ class NeonAssistant(AssistantModelsMixin):
     def start_recording_process(self):
         if self.is_recording:
             print("Started recording.")
-            self.temp_file = tempfile.NamedTemporaryFile(suffix=".wav")
+            self.temp_file = os.path.join(self.temp_dir.name, 'recording_process.wav')
             sample_rate = 16000
             bits_per_sample = 16
             chunk_size = 480
@@ -286,7 +286,7 @@ class NeonAssistant(AssistantModelsMixin):
                         self.stop_event.set()
                 return None, pyaudio.paContinue
 
-            self.wav_file = wave.open(self.temp_file.name, 'wb')
+            self.wav_file = wave.open(self.temp_file, 'wb')
             self.wav_file.setnchannels(channels)
             self.wav_file.setsampwidth(bits_per_sample // 8)
             self.wav_file.setframerate(sample_rate)
@@ -296,7 +296,8 @@ class NeonAssistant(AssistantModelsMixin):
                                           rate=sample_rate,
                                           input=True,
                                           frames_per_buffer=chunk_size,
-                                          stream_callback=callback)
+                                          stream_callback=callback,
+                                          input_device_index=2)
             print("starting stream..")
             self.stream.start_stream()
 
@@ -323,9 +324,9 @@ class NeonAssistant(AssistantModelsMixin):
         self.stream.close()
         self.audio.terminate()
         self.wav_file.close()
-        self.last_recorded_result = self.whisper_model.transcribe(self.temp_file.name)[0].text
+        self.last_recorded_result = self.whisper_model.transcribe(self.temp_file)[0].text
         print(self.last_recorded_result)
-        self.temp_file.close()
+        # self.temp_file.close()
 
         self.is_recording = False
         self.recording_thread = None
@@ -337,9 +338,12 @@ class NeonAssistant(AssistantModelsMixin):
         self.process_answer(prompt, voice=False)
 
     def __del__(self):  # destructor
-        self.llm._sampler.close()
-        self.llm.close()
-        # print("die")
+        try:
+            self.temp_dir.cleanup()
+            self.llm._sampler.close()
+            self.llm.close()
+        except:
+            pass
 
 
 if __name__ == "__main__":
