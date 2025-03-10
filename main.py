@@ -297,7 +297,7 @@ class NeonAssistant(AssistantModelsMixin):
                                           input=True,
                                           frames_per_buffer=chunk_size,
                                           stream_callback=callback,
-                                          input_device_index=2)
+                                          input_device_index=0)
             print("starting stream..")
             self.stream.start_stream()
 
