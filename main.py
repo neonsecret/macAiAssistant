@@ -224,7 +224,7 @@ class NeonAssistant(AssistantModelsMixin):
     def __init__(self, *args, **kwargs):
         # super().__init__("NeonAssistant", icon="icon_pytorch.jpg")
         super().__init__(*args, **kwargs)
-        self.menu = ["Ask the assistant"]  #  "Stop Recording"
+        self.menu = ["Ask the assistant"]  # "Stop Recording"
         # Adding menu items
         self.audio = None
         self.wav_file = None
@@ -297,6 +297,7 @@ class NeonAssistant(AssistantModelsMixin):
                                           input=True,
                                           frames_per_buffer=chunk_size,
                                           stream_callback=callback)
+            print("starting stream..")
             self.stream.start_stream()
 
             # Main loop: wait until the stop event is signaled.
@@ -343,5 +344,6 @@ class NeonAssistant(AssistantModelsMixin):
 
 if __name__ == "__main__":
     assistant = NeonAssistant()
-    assistant.debug_run("How old is adrien brody?")
+    assistant.start_recording()
+    # assistant.debug_run("How old is adrien brody?")
     del assistant  # cleanup
