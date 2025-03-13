@@ -15,3 +15,7 @@ sentence_transformers
 faiss-cpu
 duckduckgo_search
 beautifulsoup4
+fastapi
+uvicorn
+wsproto
+websockets

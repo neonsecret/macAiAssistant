@@ -1,6 +1,7 @@
 import pyaudio
 
-if __name__ == '__main__':
+
+def list_devices():
     audio = pyaudio.PyAudio()
     print("----------------------record device list---------------------")
     info = audio.get_host_api_info_by_index(0)
@@ -10,3 +11,7 @@ if __name__ == '__main__':
             print("Input Device id ", i, " - ", audio.get_device_info_by_host_api_device_index(0, i).get('name'))
 
     print("-------------------------------------------------------------")
+
+
+if __name__ == '__main__':
+    list_devices()

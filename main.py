@@ -2,7 +2,6 @@ import base64
 import datetime
 import io
 import os
-import pathlib
 import sys
 import tempfile
 import threading
@@ -221,10 +220,7 @@ class AssistantModelsMixin:
 
 class NeonAssistant(AssistantModelsMixin):
     def __init__(self, *args, **kwargs):
-        # super().__init__("NeonAssistant", icon="icon_pytorch.jpg")
         super().__init__(*args, **kwargs)
-        self.menu = ["Ask the assistant"]  # "Stop Recording"
-        # Adding menu items
         self.audio = None
         self.wav_file = None
         self.temp_file = None
@@ -244,11 +240,8 @@ class NeonAssistant(AssistantModelsMixin):
         if not self.is_recording:
             self.is_recording = True
             self.start_recording_thread()
-        # else:
-        #     rumps.alert(title="Already Recording", message="Recording is already in progress.")
 
     def start_recording_thread(self):
-        # Start the recording process in a separate thread
         self.recording_thread = threading.Thread(target=self.start_recording_process)
         self.recording_thread.start()
 
@@ -298,24 +291,14 @@ class NeonAssistant(AssistantModelsMixin):
                                           frames_per_buffer=chunk_size,
                                           stream_callback=callback,
                                           input_device_index=0)
-            print("starting stream..")
             self.stream.start_stream()
+            print("started stream..")
 
             # Main loop: wait until the stop event is signaled.
             while not self.stop_event.is_set():
                 time.sleep(0.1)
 
             self.cleanup_recording()
-        # while
-        #     print("Recording...")  # Replace with actual recording logic
-        #     time.sleep(1)  # Simulate time taken to record
-
-    # @rumps.clicked("Stop Recording")
-    # def stop_recording(self, _):
-    #     if self.is_recording:
-    #         self.cleanup_recording()
-    #     else:
-    #         rumps.alert(title="Not Recording", message="No recording is in progress.")
 
     def cleanup_recording(self):
         print("stopping rec thread")
@@ -326,12 +309,11 @@ class NeonAssistant(AssistantModelsMixin):
         self.wav_file.close()
         self.last_recorded_result = self.whisper_model.transcribe(self.temp_file)[0].text
         print(self.last_recorded_result)
-        # self.temp_file.close()
 
         self.is_recording = False
         self.recording_thread = None
         self.process_answer(self.last_recorded_result)
-        print("Recording stopped.")  # Replace with any cleanup logic if necessary
+        print("Recording stopped.")
 
     def debug_run(self, prompt):
         print("debug run")
