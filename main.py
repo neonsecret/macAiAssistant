@@ -2,6 +2,8 @@ import base64
 import datetime
 import io
 import os
+import subprocess
+import sys
 import sys
 import tempfile
 import threading
@@ -13,14 +15,15 @@ import pyaudio
 import torch
 import webrtcvad
 from PIL import ImageGrab
-from TTS.api import TTS
 from llama_cpp import Llama
 from llama_cpp.llama_chat_format import MoondreamChatHandler
+from modules.custom_functions import execute_function_call, create_tool_schema, AssistantFunctions
 from playsound import playsound
 from pywhispercpp.model import Model
 from transformers import AutoTokenizer
 
-from modules.custom_functions import execute_function_call, create_tool_schema, AssistantFunctions
+os.environ["COQUI_TOS_AGREED"] = "1"
+from TTS.api import TTS
 
 DEBUG = True
 LIGHT_RUN = False
@@ -46,8 +49,13 @@ def change_dir(destination):
         os.chdir(origin)
 
 
-with change_dir("functionary"):
-    from functionary.prompt_template import get_prompt_template_from_tokenizer
+try:
+    with change_dir("functionary"):
+        from functionary.prompt_template import get_prompt_template_from_tokenizer
+except:
+    subprocess.check_call([sys.executable, "-m", "pip", "install", "-e", "functionary"])
+    with change_dir("functionary"):
+        from functionary.prompt_template import get_prompt_template_from_tokenizer
 
 
 class AssistantModelsMixin:
