@@ -1,3 +1,4 @@
+import asyncio
 import base64
 import datetime
 import io
@@ -227,8 +228,9 @@ class AssistantModelsMixin:
 
 
 class NeonAssistant(AssistantModelsMixin):
-    def __init__(self, *args, **kwargs):
+    def __init__(self, manager, loop, *args, **kwargs):
         super().__init__(*args, **kwargs)
+        self.ready = False
         self.audio = None
         self.wav_file = None
         self.temp_file = None
@@ -244,10 +246,23 @@ class NeonAssistant(AssistantModelsMixin):
 
         self.stop_event = threading.Event()
 
+        self.loop = loop
+        self.manager = manager
+        asyncio.run_coroutine_threadsafe(
+            self.manager.broadcast("NeonAssistant initialized"),
+            self.loop
+        )
+        self.ready = True
+
     def start_recording(self):
         if not self.is_recording:
             self.is_recording = True
             self.start_recording_thread()
+
+            asyncio.run_coroutine_threadsafe(
+                self.manager.broadcast("Recording started"),
+                self.loop
+            )
 
     def start_recording_thread(self):
         self.recording_thread = threading.Thread(target=self.start_recording_process)
@@ -277,10 +292,18 @@ class NeonAssistant(AssistantModelsMixin):
                         self.user_talking = True
                         self.confidence_counter = 0
                         print("user talks now")
+                        asyncio.run_coroutine_threadsafe(
+                            self.manager.broadcast("User talks now."),
+                            self.loop
+                        )
                 if self.user_talking and not is_speech:
                     self.confidence_counter += 1
                     if self.confidence_counter >= 5:
                         print("user stopped talking")
+                        asyncio.run_coroutine_threadsafe(
+                            self.manager.broadcast("User stopped talking."),
+                            self.loop
+                        )
                         self.user_talking = False
                         self.confidence_counter = 0
 
@@ -322,6 +345,10 @@ class NeonAssistant(AssistantModelsMixin):
         self.recording_thread = None
         self.process_answer(self.last_recorded_result)
         print("Recording stopped.")
+        asyncio.run_coroutine_threadsafe(
+            self.manager.broadcast("Recording stopped."),
+            self.loop
+        )
 
     def debug_run(self, prompt):
         print("debug run")

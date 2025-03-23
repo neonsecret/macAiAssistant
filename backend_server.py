@@ -1,17 +1,17 @@
 import os
 import threading
+import asyncio
 
 import uvicorn
-from flask import Flask, jsonify
-import random
-import time
-import asyncio
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse
 
-assistant = None
+# Define a global event loop that will be shared
+loop = asyncio.new_event_loop()
+asyncio.set_event_loop(loop)
 
 
+# Create a connection manager
 class ConnectionManager:
     def __init__(self):
         self.active_connections = []
@@ -29,11 +29,15 @@ class ConnectionManager:
             try:
                 await connection.send_text(message)
             except Exception as e:
-                print("Error sending message", e)
+                print(f"Error sending message: {e}")
+                # Don't remove here, we'll let the disconnect handler manage this
 
 
 app = FastAPI()
 manager = ConnectionManager()
+
+# Create an assistant placeholder
+assistant = None
 
 
 @app.websocket("/ws")
@@ -42,62 +46,77 @@ async def websocket_endpoint(websocket: WebSocket):
     try:
         while True:
             data = await websocket.receive_text()
-            print("Python: received from client:", data)
-            match data:
-                case "run_query":
-                    run_query()
-                case "check_assistant_running":
-                    await websocket.send_text(check_assistant_running())
+            print(f"Python: received from client: {data}")
+            if data == "run_query":
+                await run_query()
+            elif data == "check_assistant_running":
+                result = check_assistant_running()
+                await websocket.send_text(result)
     except WebSocketDisconnect:
         manager.disconnect(websocket)
         print("Python: client disconnected")
 
 
-# @app.post("/run_query")
-def run_query():
+async def run_query():
+    global assistant
     print("Python: assistant listening")
-    assistant.start_recording()
-    return {"status": "Recording started via run_query"}
+    if assistant and hasattr(assistant, 'start_recording'):
+        # Use asyncio.to_thread for potentially blocking operations
+        await loop.run_in_executor(None, assistant.start_recording)
+        return {"status": "Recording started via run_query"}
+    else:
+        print("Warning: Assistant not initialized yet")
+        return {"status": "Assistant not ready"}
 
 
-# @app.get("/assistant_running")
 def check_assistant_running():
-    if assistant and assistant.ready:
+    global assistant
+    if assistant and getattr(assistant, 'ready', False):
         return "NeonAssistant initialized"
     else:
         return "false"
 
 
+async def initialize_assistant():
+    global assistant, manager, loop
+    print("Initializing NeonAssistant...")
+
+    # Import here instead of at the top to avoid circular imports
+    from main import NeonAssistant
+    # Create assistant instance
+    assistant = NeonAssistant(manager, loop)
+    print("NeonAssistant initialization complete")
+
+    # Broadcast initialization completed
+    await manager.broadcast("NeonAssistant initialized")
+    return assistant
+
+
+# Run initialization in the background
+def start_assistant_init():
+    global loop
+    asyncio.run_coroutine_threadsafe(initialize_assistant(), loop)
+
+
+# Function to start the server with the shared event loop
 def run_server():
-    uvicorn.run(app, host='127.0.0.1', port=5372)
+    global loop
+    config = uvicorn.Config(app, host='127.0.0.1', port=5372, loop=loop)
+    server = uvicorn.Server(config)
+    loop.run_until_complete(server.serve())
 
 
 if __name__ == '__main__':
+    # Start the server in a thread
     server_thread = threading.Thread(target=run_server, daemon=True)
     server_thread.start()
 
-from main import NeonAssistant
+    # Await 2 secs
+    loop.call_later(2, start_assistant_init)
 
-
-class NeonAssistantWS(NeonAssistant):
-    def __init__(self, manager: ConnectionManager, *args, **kwargs):
-        self.ready = False
-        self.manager = manager
-        self.loop = asyncio.get_event_loop()
-        super().__init__(*args, **kwargs)
-        self.loop.create_task(self.manager.broadcast("NeonAssistant initialized"))
-        self.ready = True
-
-    def start_recording(self):
-        super().start_recording()
-        self.loop.create_task(self.manager.broadcast("Recording started"))
-
-    def cleanup_recording(self):
-        self.loop.create_task(self.manager.broadcast("Recording cleaned up"))
-        super().cleanup_recording()
-
-
-assistant = NeonAssistantWS(manager)
-print("Ready")
-if __name__ == '__main__':
-    server_thread.join()
+    # Keep the main thread alive
+    try:
+        server_thread.join()
+    except KeyboardInterrupt:
+        print("Server shutting down...")
+        loop.stop()
