@@ -132,7 +132,10 @@ class AssistantModelsMixin:
                 tool_call = parsed_response['tool_calls'][0]  # Process one call per turn
                 func_name = tool_call['function']['name']
                 print("Calling", tool_call)
-                function_result = execute_function_call(tool_call)
+                try:
+                    function_result = execute_function_call(tool_call)
+                except:
+                    function_result = "Function call failed."
                 print(f"Function call returned: {function_result}")
                 if isinstance(function_result, bool):
                     function_result = "Success." if function_result else "Function failed."
@@ -244,7 +247,7 @@ class NeonAssistant(AssistantModelsMixin):
                         self.confidence_counter = 0
                         print("user talks now")
                         asyncio.run_coroutine_threadsafe(
-                            self.manager.broadcast("User talks now."),
+                            self.manager.broadcast("Speak, please."),
                             self.loop
                         )
                 if self.user_talking and not is_speech:
@@ -252,7 +255,7 @@ class NeonAssistant(AssistantModelsMixin):
                     if self.confidence_counter >= 20:
                         print("user stopped talking")
                         asyncio.run_coroutine_threadsafe(
-                            self.manager.broadcast("User stopped talking."),
+                            self.manager.broadcast("You stopped talking."),
                             self.loop
                         )
                         self.user_talking = False
@@ -293,10 +296,10 @@ class NeonAssistant(AssistantModelsMixin):
         self.recording_thread = None
         self.process_answer(self.last_recorded_result)
         print("Recording stopped.")
-        asyncio.run_coroutine_threadsafe(
-            self.manager.broadcast("Recording stopped."),
-            self.loop
-        )
+        # asyncio.run_coroutine_threadsafe(
+        #     self.manager.broadcast("Recording stopped."),
+        #     self.loop
+        # )
 
     def debug_run(self, prompt):
         print("debug run")
@@ -312,6 +315,16 @@ class NeonAssistant(AssistantModelsMixin):
                 self.llm.close()
         except Exception as e:
             print(f"Error during cleanup: {e}")
+
+    def voice_speech(self, prompt, playback=True):
+        super().voice_speech(prompt, playback=playback)
+        if len(prompt) > 100:
+            prompt = prompt[:100] + ".."
+        time.sleep(2)
+        asyncio.run_coroutine_threadsafe(
+            self.manager.broadcast(prompt),
+            self.loop
+        )
 
 
 if __name__ == "__main__":
