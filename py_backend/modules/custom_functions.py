@@ -115,8 +115,8 @@ class AssistantFunctions:
 
             # Format dates for AppleScript
             # AppleScript date format: "month/day/year hour:minute:00 AM/PM"
-            start_date_str = parsed_start.strftime("%-d/%-m/%Y %-I:%M:00 %p")
-            end_date_str = parsed_end.strftime("%-d/%-m/%Y %-I:%M:00 %p")
+            start_date_str = parsed_start.strftime("%-d/%-m/%Y %H:%M:00")
+            end_date_str = parsed_end.strftime("%-d/%-m/%Y %H:%M:00")
 
             # Escape double quotes in the summary
             summary = summary.replace('"', '\\"')
