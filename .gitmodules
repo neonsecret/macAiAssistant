@@ -1,0 +1,3 @@
+[submodule "py_backend/functionary"]
+	path = py_backend/functionary
+	url = https://github.com/MeetKai/functionary

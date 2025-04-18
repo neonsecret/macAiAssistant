@@ -1,3 +1,5 @@
-/.eggs/
-/.idea/
-*.tex
+/py_backend/out
+/py_backend/.eggs/
+/py_backend/.idea/
+/py_backend/*.tex
+/py_backend/bcvenv
