@@ -82,7 +82,7 @@ async def initialize_assistant():
     print("Initializing NeonAssistant...")
 
     # Import here instead of at the top to avoid circular imports
-    from main import NeonAssistant
+    from neon_assistant import NeonAssistant
     # Create assistant instance
     assistant = NeonAssistant(manager, loop)
     print("NeonAssistant initialization complete")
